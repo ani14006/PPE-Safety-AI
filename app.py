@@ -16,7 +16,8 @@ app = Flask(__name__)
 # ---------------------------------------------------------------------------
 DATABASE_DIR = os.environ.get("DATABASE_DIR", "database")
 DB_PATH = os.path.join(DATABASE_DIR, "ppe_safety.db")
-MODEL_PATH = os.environ.get("PPE_MODEL", "keremberke/yolov8n-PPE-detection")
+LOCAL_MODEL = os.path.join(os.path.dirname(__file__), "models", "ppe_model.pt")
+MODEL_PATH  = os.environ.get("PPE_MODEL", LOCAL_MODEL)
 EXPORT_PATH = os.path.join(DATABASE_DIR, "violations_export.csv")
 
 # PPE class definitions from keremberke/yolov8n-PPE-detection
@@ -107,54 +108,16 @@ model_load_error = None   # set to error string on failure
 def _load_model():
     global yolo_model, model_loading, model_load_error
     from ultralytics import YOLO
-
-    # Strategy 1: explicit hf_hub_download — most reliable on cloud hosts
     try:
-        from huggingface_hub import hf_hub_download
-        repo_id = MODEL_PATH if "/" in MODEL_PATH else "keremberke/yolov8n-PPE-detection"
-        print(f"[startup] Downloading {repo_id}/best.pt from HuggingFace…")
-        pt_path = hf_hub_download(repo_id=repo_id, filename="best.pt")
-        print(f"[startup] Downloaded to {pt_path}")
-        yolo_model = YOLO(pt_path)
+        print(f"[startup] Loading PPE model from: {MODEL_PATH}")
+        yolo_model = YOLO(MODEL_PATH)
         dummy = np.zeros((320, 320, 3), dtype=np.uint8)
         yolo_model(dummy, verbose=False)
         print(f"[startup] Model ready ✓  classes={list(yolo_model.names.values())}")
-        model_loading = False
-        return
     except Exception as exc:
-        print(f"[startup] hf_hub_download failed: {exc}")
-
-    # Strategy 2: hf:// URI (ultralytics >= 8.2 native HF support)
-    try:
-        hf_uri = f"hf://keremberke/yolov8n-PPE-detection"
-        print(f"[startup] Trying {hf_uri}…")
-        yolo_model = YOLO(hf_uri)
-        dummy = np.zeros((320, 320, 3), dtype=np.uint8)
-        yolo_model(dummy, verbose=False)
-        print(f"[startup] Model ready via hf:// ✓")
-        model_loading = False
-        return
-    except Exception as exc:
-        print(f"[startup] hf:// failed: {exc}")
-
-    # Strategy 3: bare repo-id string
-    try:
-        print(f"[startup] Trying bare repo id…")
-        yolo_model = YOLO("keremberke/yolov8n-PPE-detection")
-        dummy = np.zeros((320, 320, 3), dtype=np.uint8)
-        yolo_model(dummy, verbose=False)
-        print(f"[startup] Model ready via bare id ✓")
-        model_loading = False
-        return
-    except Exception as exc:
-        print(f"[startup] bare id failed: {exc}")
-
-    model_load_error = (
-        "Could not download the PPE detection model from HuggingFace. "
-        "Check Railway logs for details."
-    )
+        model_load_error = str(exc)
+        print(f"[startup] Model load failed: {exc}")
     model_loading = False
-    print(f"[startup] All strategies failed — {model_load_error}")
 
 threading.Thread(target=_load_model, daemon=True).start()
 
