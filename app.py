@@ -104,13 +104,20 @@ yolo_model = None
 
 def _load_model():
     global yolo_model
-    try:
-        from ultralytics import YOLO
-        print(f"[startup] Loading PPE model: {MODEL_PATH}")
-        yolo_model = YOLO(MODEL_PATH)
-        print("[startup] PPE model loaded successfully.")
-    except Exception as exc:
-        print(f"[startup] Failed to load PPE model: {exc}")
+    from ultralytics import YOLO
+    candidates = [f"hf://{MODEL_PATH}", MODEL_PATH] if not MODEL_PATH.endswith(".pt") else [MODEL_PATH]
+    for path in candidates:
+        try:
+            print(f"[startup] Trying model: {path}")
+            yolo_model = YOLO(path)
+            # Warm-up so first real frame isn't slow
+            dummy = np.zeros((320, 320, 3), dtype=np.uint8)
+            yolo_model(dummy, verbose=False)
+            print(f"[startup] Model loaded OK. Classes: {list(yolo_model.names.values())}")
+            return
+        except Exception as exc:
+            print(f"[startup] {path} failed: {exc}")
+    print("[startup] All model paths failed — detection will be unavailable.")
 
 threading.Thread(target=_load_model, daemon=True).start()
 
@@ -158,22 +165,23 @@ def api_process_frame():
 
         # --- Model not ready yet ----------------------------------------
         if yolo_model is None:
-            cv2.putText(frame, "Loading AI Model...", (20, frame.shape[0] // 2),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 255), 2)
-            _, buf = cv2.imencode(".jpg", frame)
             return jsonify({
                 "success": True,
-                "image": "data:image/jpeg;base64," + base64.b64encode(buf).decode(),
+                "loading": True,
+                "detections": [],
+                "frame_w": frame.shape[1],
+                "frame_h": frame.shape[0],
                 "status": current_status,
             })
 
         # --- Run detection ----------------------------------------------
         results = yolo_model(frame, verbose=False, conf=float(app_settings["yolo_conf"]))
 
-        person_count   = 0
-        present_set    = set()
-        violation_set  = set()
-        other_objs     = []
+        person_count  = 0
+        present_set   = set()
+        violation_set = set()
+        other_objs    = []
+        detections    = []
 
         for r in results:
             for box in r.boxes:
@@ -182,14 +190,19 @@ def api_process_frame():
                 conf  = float(box.conf[0])
                 label = yolo_model.names[cls]
                 meta  = PPE_META.get(label, {"kind": "object", "ppe": None, "color": (120, 120, 120)})
-                col   = meta["color"]
+                kind  = meta["kind"]
+                ppe   = meta.get("ppe")
 
-                cv2.rectangle(frame, (x1, y1), (x2, y2), col, 2)
-                cv2.putText(frame, f"{label} {conf:.0%}", (x1, max(y1 - 8, 10)),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.52, col, 2)
+                # BGR → CSS hex
+                b, g, rv = meta["color"]
+                hex_col = f"#{rv:02x}{g:02x}{b:02x}"
 
-                kind = meta["kind"]
-                ppe  = meta["ppe"]
+                detections.append({
+                    "x1": x1, "y1": y1, "x2": x2, "y2": y2,
+                    "label": label, "conf": round(conf, 2),
+                    "color": hex_col, "kind": kind,
+                })
+
                 if kind == "person":
                     person_count += 1
                 elif kind == "present" and ppe:
@@ -204,15 +217,6 @@ def api_process_frame():
         missing_list = sorted(p.replace("_", " ").title() for p in violation_set)
         present_list = sorted(p.replace("_", " ").title() for p in present_set)
         compliant    = person_found and len(violation_set) == 0
-
-        # Status banner overlay
-        if person_found:
-            if compliant:
-                bcol, btxt = (0, 160, 0), "COMPLIANT — All Required PPE Detected"
-            else:
-                bcol, btxt = (0, 0, 200), f"VIOLATION — Missing: {', '.join(missing_list)}"
-            cv2.rectangle(frame, (0, 0), (frame.shape[1], 36), bcol, -1)
-            cv2.putText(frame, btxt, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.68, (255, 255, 255), 2)
 
         # --- Throttled DB write (every 5 s when person present) ----------
         now_ts  = datetime.now()
@@ -253,11 +257,13 @@ def api_process_frame():
             "last_update":     now_str,
         }
 
-        _, buf = cv2.imencode(".jpg", frame)
         return jsonify({
-            "success": True,
-            "image":  "data:image/jpeg;base64," + base64.b64encode(buf).decode(),
-            "status": current_status,
+            "success":    True,
+            "loading":    False,
+            "detections": detections,
+            "frame_w":    frame.shape[1],
+            "frame_h":    frame.shape[0],
+            "status":     current_status,
         })
 
     except Exception as exc:

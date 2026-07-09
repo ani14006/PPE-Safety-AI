@@ -5,6 +5,27 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Live Monitor — PPE Safety AI</title>
   <link rel="stylesheet" href="/static/css/style.css" />
+  <style>
+    /* Overlay canvas sits exactly on top of the video */
+    .video-wrapper { position: relative; }
+    #overlay-canvas {
+      position: absolute; inset: 0;
+      width: 100%; height: 100%;
+      pointer-events: none;
+    }
+    #loading-overlay {
+      position: absolute; inset: 0; display: none;
+      align-items: center; justify-content: center;
+      background: rgba(0,0,0,.55); color: #fff;
+      font-size: 14px; gap: 10px; flex-direction: column;
+    }
+    .spinner {
+      width: 36px; height: 36px; border: 3px solid rgba(255,255,255,.2);
+      border-top-color: #6c63ff; border-radius: 50%;
+      animation: spin .8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
 </head>
 <body>
 <div class="app-container">
@@ -40,26 +61,36 @@
       <!-- Camera feed -->
       <div>
         <div class="video-wrapper" id="video-wrapper">
-          <video id="webcam" autoplay muted playsinline></video>
-          <canvas id="feed-canvas" style="display:none"></canvas>
-          <img id="processed-img" alt="Processed feed" />
+          <!-- Live video — always visible for smooth feed -->
+          <video id="webcam" autoplay muted playsinline
+                 style="width:100%;height:100%;object-fit:cover;display:block"></video>
 
+          <!-- Transparent canvas drawn on top for detection boxes -->
+          <canvas id="overlay-canvas"></canvas>
+
+          <!-- Loading spinner shown while AI model warms up -->
+          <div id="loading-overlay">
+            <div class="spinner"></div>
+            <span>AI model loading — detection starts shortly…</span>
+          </div>
+
+          <!-- Placeholder when camera is off -->
           <div class="feed-placeholder" id="placeholder">
             <div class="ph-icon">📷</div>
             <p>Click <strong>Start Camera</strong> to begin detection</p>
           </div>
 
           <div class="cam-controls">
-            <button class="btn btn-primary"   id="btn-start">▶ Start Camera</button>
-            <button class="btn btn-danger"    id="btn-stop"  style="display:none">■ Stop</button>
+            <button class="btn btn-primary" id="btn-start">▶ Start Camera</button>
+            <button class="btn btn-danger"  id="btn-stop" style="display:none">■ Stop</button>
           </div>
         </div>
 
-        <!-- Other objects detected -->
+        <!-- Other objects -->
         <div class="glass-card mt-2">
           <div class="chart-title">OTHER DETECTED OBJECTS</div>
           <div id="other-objects" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">
-            <span style="color:var(--muted);font-size:12px">None detected</span>
+            <span style="color:var(--muted);font-size:12px">None</span>
           </div>
         </div>
       </div>
@@ -80,17 +111,17 @@
             <div class="ppe-item" id="ppe-hardhat">
               <span class="pi-icon">🪖</span>
               <span class="pi-name">Hard Hat</span>
-              <span class="pi-status" id="ppe-hardhat-status">—</span>
+              <span class="pi-status" id="st-hardhat">—</span>
             </div>
             <div class="ppe-item" id="ppe-vest">
               <span class="pi-icon">🦺</span>
               <span class="pi-name">Safety Vest</span>
-              <span class="pi-status" id="ppe-vest-status">—</span>
+              <span class="pi-status" id="st-vest">—</span>
             </div>
             <div class="ppe-item" id="ppe-mask">
               <span class="pi-icon">😷</span>
               <span class="pi-name">Mask</span>
-              <span class="pi-status" id="ppe-mask-status">—</span>
+              <span class="pi-status" id="st-mask">—</span>
             </div>
           </div>
         </div>
@@ -102,6 +133,10 @@
             <div class="info-row">
               <span class="lbl">People in Frame</span>
               <span class="val" id="info-people">0</span>
+            </div>
+            <div class="info-row">
+              <span class="lbl">Detections</span>
+              <span class="val" id="info-dets">0</span>
             </div>
             <div class="info-row">
               <span class="lbl">Location</span>
@@ -118,57 +153,56 @@
           </div>
         </div>
 
-        <!-- Quick links -->
         <div style="display:flex;gap:8px">
-          <a href="/violations" class="btn btn-secondary btn-sm" style="flex:1;justify-content:center">
-            ⚠️ Violations
-          </a>
-          <a href="/settings" class="btn btn-secondary btn-sm" style="flex:1;justify-content:center">
-            ⚙️ Settings
-          </a>
+          <a href="/violations" class="btn btn-secondary btn-sm" style="flex:1;justify-content:center">⚠️ Violations</a>
+          <a href="/settings"   class="btn btn-secondary btn-sm" style="flex:1;justify-content:center">⚙️ Settings</a>
         </div>
 
-      </div><!-- end status-panel -->
-    </div><!-- end monitor-container -->
+      </div>
+    </div>
   </main>
 </div>
 
 <script src="/static/js/app.js"></script>
 <script>
 // ---- DOM refs -----------------------------------------------------------
-const webcam        = document.getElementById("webcam");
-const canvas        = document.getElementById("feed-canvas");
-const processedImg  = document.getElementById("processed-img");
-const placeholder   = document.getElementById("placeholder");
-const btnStart      = document.getElementById("btn-start");
-const btnStop       = document.getElementById("btn-stop");
-const banner        = document.getElementById("compliance-banner");
-const bannerText    = document.getElementById("banner-text");
-const bannerSub     = document.getElementById("banner-sub");
-const statusDot     = document.getElementById("status-dot");
-const statusText    = document.getElementById("status-text");
+const webcam         = document.getElementById("webcam");
+const overlayCanvas  = document.getElementById("overlay-canvas");
+const overlayCtx     = overlayCanvas.getContext("2d");
+const loadingOverlay = document.getElementById("loading-overlay");
+const placeholder    = document.getElementById("placeholder");
+const btnStart       = document.getElementById("btn-start");
+const btnStop        = document.getElementById("btn-stop");
+const banner         = document.getElementById("compliance-banner");
+const bannerText     = document.getElementById("banner-text");
+const bannerSub      = document.getElementById("banner-sub");
+const statusDot      = document.getElementById("status-dot");
+const statusText     = document.getElementById("status-text");
 
-let stream    = null;
-let running   = false;
-let frameLoop = null;
-let statusPoll= null;
-let ctx       = null;
+// Hidden canvas used only for capturing frames to send to the server
+const captureCanvas = document.createElement("canvas");
+const captureCtx    = captureCanvas.getContext("2d");
+
+let stream     = null;
+let running    = false;
+let frameTimer = null;
+let statusPoll = null;
 
 // ---- Camera start/stop --------------------------------------------------
 async function startCamera() {
   try {
     stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
     webcam.srcObject = stream;
-    webcam.style.display = "block";
-    canvas.style.display = "none";
-    processedImg.style.display = "none";
-    placeholder.style.display  = "none";
-    btnStart.style.display = "none";
-    btnStop.style.display  = "";
+    placeholder.style.display = "none";
+    btnStart.style.display    = "none";
+    btnStop.style.display     = "";
     running = true;
-    ctx = canvas.getContext("2d");
-    sendFrame();
-    statusPoll = setInterval(pollStatus, 3000);
+    // Wait for video metadata so we know resolution
+    webcam.addEventListener("loadedmetadata", () => {
+      syncOverlaySize();
+      scheduleFrame();
+    }, { once: true });
+    statusPoll = setInterval(pollNotifications, 4000);
   } catch (e) {
     showToast("Camera access denied: " + e.message, "error");
   }
@@ -176,74 +210,123 @@ async function startCamera() {
 
 function stopCamera() {
   running = false;
-  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
-  clearTimeout(frameLoop);
+  clearTimeout(frameTimer);
   clearInterval(statusPoll);
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
   webcam.srcObject = null;
-  webcam.style.display = "block";
-  processedImg.style.display = "none";
-  placeholder.style.display  = "";
-  btnStart.style.display = "";
-  btnStop.style.display  = "none";
+  placeholder.style.display = "";
+  btnStart.style.display    = "";
+  btnStop.style.display     = "none";
+  clearOverlay();
   setBanner("idle", "NO PERSON IN FRAME", "Camera stopped");
-  setAllPPE("—", "");
+  resetPPEItems();
   document.getElementById("info-people").textContent = "0";
-  statusDot.style.background  = "var(--muted)";
-  statusText.textContent = "Idle";
+  document.getElementById("info-dets").textContent   = "0";
+  statusDot.style.background = "var(--muted)";
+  statusText.textContent     = "Idle";
 }
 
-// ---- Send frame to server -----------------------------------------------
+// ---- Keep overlay canvas pixel-perfect with the video element -----------
+function syncOverlaySize() {
+  const rect = webcam.getBoundingClientRect();
+  overlayCanvas.width  = webcam.videoWidth  || rect.width;
+  overlayCanvas.height = webcam.videoHeight || rect.height;
+}
+window.addEventListener("resize", () => { if (running) syncOverlaySize(); });
+
+// ---- Capture + send frame to server -------------------------------------
+function scheduleFrame() {
+  if (!running) return;
+  frameTimer = setTimeout(sendFrame, 800);
+}
+
 async function sendFrame() {
   if (!running) return;
   try {
-    canvas.width  = webcam.videoWidth  || 640;
-    canvas.height = webcam.videoHeight || 480;
-    ctx.drawImage(webcam, 0, 0);
-    const b64 = canvas.toDataURL("image/jpeg", 0.82);
+    captureCanvas.width  = webcam.videoWidth  || 640;
+    captureCanvas.height = webcam.videoHeight || 480;
+    captureCtx.drawImage(webcam, 0, 0);
+    const b64 = captureCanvas.toDataURL("image/jpeg", 0.75);
 
     const resp = await fetch("/api/process_frame", {
-      method: "POST",
+      method:  "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ image: b64 }),
+      body:    JSON.stringify({ image: b64 }),
     });
     const data = await resp.json();
 
-    if (data.success && data.image) {
-      webcam.style.display       = "none";
-      processedImg.style.display = "block";
-      processedImg.src           = data.image;
-      updatePanel(data.status);
+    if (!data.success) { scheduleFrame(); return; }
+
+    if (data.loading) {
+      loadingOverlay.style.display = "flex";
+      document.getElementById("info-model").textContent = "Loading…";
+    } else {
+      loadingOverlay.style.display = "none";
+      document.getElementById("info-model").textContent = "PPE Detector ✓";
+      drawDetections(data.detections, data.frame_w, data.frame_h);
+      updatePanel(data.status, data.detections.length);
     }
   } catch (_) {}
-
-  if (running) frameLoop = setTimeout(sendFrame, 900);
+  scheduleFrame();
 }
 
-// ---- Poll live status (for notifications) -------------------------------
-async function pollStatus() {
-  try {
-    const r = await fetch("/api/live_status");
-    const d = await r.json();
-    if (d.notification) showToast("🚨 " + d.notification, "warn", 6000);
-    document.getElementById("info-model").textContent =
-      d.person_detected !== undefined ? "PPE Detector" : "Loading…";
-  } catch (_) {}
+// ---- Draw detection boxes on the overlay canvas -------------------------
+function drawDetections(detections, fw, fh) {
+  syncOverlaySize();
+  overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+
+  if (!detections || !detections.length) return;
+
+  const scaleX = overlayCanvas.width  / (fw || overlayCanvas.width);
+  const scaleY = overlayCanvas.height / (fh || overlayCanvas.height);
+
+  overlayCtx.font         = "bold 13px 'Segoe UI', sans-serif";
+  overlayCtx.lineWidth    = 2.5;
+  overlayCtx.textBaseline = "top";
+
+  for (const det of detections) {
+    const x1 = det.x1 * scaleX;
+    const y1 = det.y1 * scaleY;
+    const x2 = det.x2 * scaleX;
+    const y2 = det.y2 * scaleY;
+    const w  = x2 - x1;
+    const h  = y2 - y1;
+
+    // Box
+    overlayCtx.strokeStyle = det.color;
+    overlayCtx.strokeRect(x1, y1, w, h);
+
+    // Label chip
+    const labelText = `${det.label}  ${Math.round(det.conf * 100)}%`;
+    const textW = overlayCtx.measureText(labelText).width;
+    const chipH = 18;
+    const chipY = y1 > chipH + 2 ? y1 - chipH - 2 : y1 + 2;
+
+    overlayCtx.fillStyle = det.color;
+    overlayCtx.fillRect(x1, chipY, textW + 10, chipH);
+
+    overlayCtx.fillStyle = "#ffffff";
+    overlayCtx.fillText(labelText, x1 + 5, chipY + 2);
+  }
+}
+
+function clearOverlay() {
+  overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
 }
 
 // ---- Update status panel ------------------------------------------------
-function updatePanel(s) {
+function updatePanel(s, detCount) {
   if (!s) return;
 
-  document.getElementById("info-people").textContent = s.person_count || 0;
-  document.getElementById("info-update").textContent =
-    s.last_update ? s.last_update.split(" ")[1] : "—";
-  document.getElementById("info-model").textContent  = "PPE Detector ✓";
+  document.getElementById("info-people").textContent = s.person_count  || 0;
+  document.getElementById("info-dets").textContent   = detCount        || 0;
+  if (s.last_update) document.getElementById("info-update").textContent = s.last_update.split(" ")[1];
 
   if (!s.person_detected) {
-    setBanner("idle", "NO PERSON IN FRAME", "Point camera at a person");
-    setAllPPE("—", "");
+    setBanner("idle", "NO PERSON IN FRAME", "Point camera at a worker");
+    resetPPEItems();
     statusDot.style.background = "var(--muted)";
-    statusText.textContent = "Idle";
+    statusText.textContent     = "Idle";
     return;
   }
 
@@ -253,74 +336,74 @@ function updatePanel(s) {
   if (s.is_compliant) {
     setBanner("safe", "✅ COMPLIANT", "All required PPE detected");
     statusDot.style.background = "var(--green)";
-    statusText.textContent = "Compliant";
+    statusText.textContent     = "Compliant";
   } else {
     setBanner("unsafe", "🚨 VIOLATION", "Missing: " + miss.join(", "));
     statusDot.style.background = "var(--red)";
-    statusText.textContent = "Violation";
+    statusText.textContent     = "Violation";
   }
 
-  setPPEItem("hardhat",     "Hard Hat",    pres, miss, s);
-  setPPEItem("safety_vest", "Safety Vest", pres, miss, s);
-  setPPEItem("mask",        "Mask",        pres, miss, s);
+  setPPERow("hardhat",     "st-hardhat", "ppe-hardhat", pres, miss);
+  setPPERow("safety_vest", "st-vest",    "ppe-vest",    pres, miss);
+  setPPERow("mask",        "st-mask",    "ppe-mask",    pres, miss);
 
-  // Other objects
   const objEl = document.getElementById("other-objects");
   const objs  = s.other_objects || [];
   objEl.innerHTML = objs.length
-    ? objs.map(o => `<span class="badge badge-object">${o}</span>`).join("")
+    ? objs.map(o => `<span class="badge badge-object">${o}</span>`).join(" ")
     : `<span style="color:var(--muted);font-size:12px">None</span>`;
 }
 
 function setBanner(cls, txt, sub) {
-  banner.className = "compliance-banner " + cls;
+  banner.className     = "compliance-banner " + cls;
   bannerText.textContent = txt;
   bannerSub.textContent  = sub;
 }
 
-function setPPEItem(key, label, pres, miss, s) {
-  const presKey = label.toLowerCase().replace(" ", "_");
-  const presArr = (pres || []).map(p => p.toLowerCase().replace(" ", "_"));
-  const missArr = (miss || []).map(p => p.toLowerCase().replace(" ", "_"));
-  const elId    = key === "safety_vest" ? "ppe-vest" : "ppe-" + key;
-  const el      = document.getElementById(elId);
-  const stEl    = document.getElementById(elId + "-status");
+function setPPERow(key, statusId, itemId, pres, miss) {
+  const el  = document.getElementById(itemId);
+  const stEl= document.getElementById(statusId);
+  el.classList.remove("detected", "missing");
 
-  el.classList.remove("detected", "missing", "optional");
+  const inPres = pres.some(p => p.toLowerCase().replace(/ /g,"_").includes(key) ||
+                                key.includes(p.toLowerCase().split(" ")[0]));
+  const inMiss = miss.some(p => p.toLowerCase().replace(/ /g,"_").includes(key) ||
+                                key.includes(p.toLowerCase().split(" ")[0]));
 
-  const detected  = presArr.some(p => p.includes(key) || key.includes(p.split("_")[0]));
-  const missing   = missArr.some(p => p.includes(key) || key.includes(p.split("_")[0]));
-
-  if (missing) {
-    el.classList.add("missing"); stEl.textContent = "❌ MISSING";
-  } else if (detected) {
-    el.classList.add("detected"); stEl.textContent = "✓ DETECTED";
-  } else {
-    stEl.textContent = "—";
-  }
+  if (inMiss)       { el.classList.add("missing");  stEl.textContent = "❌ MISSING"; }
+  else if (inPres)  { el.classList.add("detected"); stEl.textContent = "✓ DETECTED"; }
+  else              { stEl.textContent = "—"; }
 }
 
-function setAllPPE(txt, cls) {
+function resetPPEItems() {
   ["ppe-hardhat","ppe-vest","ppe-mask"].forEach(id => {
-    const el = document.getElementById(id);
-    el.classList.remove("detected","missing","optional");
-    document.getElementById(id + "-status").textContent = txt;
+    document.getElementById(id).classList.remove("detected","missing");
+  });
+  ["st-hardhat","st-vest","st-mask"].forEach(id => {
+    document.getElementById(id).textContent = "—";
   });
 }
 
-// ---- Fetch settings for info panel -------------------------------------
-async function loadSettingsInfo() {
+// ---- Poll for violation notifications -----------------------------------
+async function pollNotifications() {
+  try {
+    const r = await fetch("/api/live_status");
+    const d = await r.json();
+    if (d.notification) showToast("🚨 " + d.notification, "warn", 6000);
+  } catch (_) {}
+}
+
+// ---- Load location name from settings -----------------------------------
+(async () => {
   try {
     const r = await fetch("/api/settings");
     const d = await r.json();
     document.getElementById("info-location").textContent = d.location || "—";
   } catch (_) {}
-}
+})();
 
-// ---- Init ---------------------------------------------------------------
 btnStart.addEventListener("click", startCamera);
 btnStop.addEventListener("click",  stopCamera);
-loadSettingsInfo();
 </script>
 </body>
 </html>
