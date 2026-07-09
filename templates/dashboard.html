@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dashboard — PPE Safety AI</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+<div class="app-container">
+
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <div class="brand-icon">🦺</div>
+      <h1>PPE Safety AI</h1>
+      <p>Compliance Monitor</p>
+    </div>
+    <nav class="sidebar-nav">
+      <div class="nav-section-label">Navigation</div>
+      <a href="/"           class="nav-item active"><span class="icon">📊</span><span>Dashboard</span></a>
+      <a href="/monitor"    class="nav-item"><span class="icon">📷</span><span>Live Monitor</span></a>
+      <a href="/violations" class="nav-item"><span class="icon">⚠️</span><span>Violations</span></a>
+      <a href="/settings"   class="nav-item"><span class="icon">⚙️</span><span>Settings</span></a>
+    </nav>
+    <div class="sidebar-footer">
+      <span class="status-dot"></span>System Online
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <main class="main-content">
+    <div class="page-header">
+      <h2>Dashboard</h2>
+      <p>Today's PPE compliance summary</p>
+    </div>
+
+    <!-- Stats -->
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-label">Total Scans Today</div>
+        <div class="stat-value text-accent" id="stat-total-scans">—</div>
+        <div class="stat-sub">Detection events logged</div>
+        <div class="stat-icon">📡</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Compliance Rate</div>
+        <div class="stat-value text-green" id="stat-compliance">—</div>
+        <div class="stat-sub">Workers fully equipped</div>
+        <div class="stat-icon">✅</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Violations Today</div>
+        <div class="stat-value text-red" id="stat-violations">—</div>
+        <div class="stat-sub">Missing PPE incidents</div>
+        <div class="stat-icon">🚨</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">People Detected</div>
+        <div class="stat-value text-blue" id="stat-people">—</div>
+        <div class="stat-sub">Total detections today</div>
+        <div class="stat-icon">👷</div>
+      </div>
+    </div>
+
+    <!-- Charts -->
+    <div class="charts-grid">
+      <div class="chart-card">
+        <div class="chart-title">7-DAY COMPLIANCE RATE</div>
+        <div style="height:220px"><canvas id="chart-daily"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-title">VIOLATIONS BY PPE TYPE (TODAY)</div>
+        <div style="height:220px"><canvas id="chart-vtype"></canvas></div>
+      </div>
+    </div>
+
+    <!-- Recent violations -->
+    <div class="table-card">
+      <div class="table-header">
+        <h3>Recent Violations</h3>
+        <a href="/api/export/csv" class="btn btn-secondary btn-sm">⬇ Export CSV</a>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>#</th><th>Timestamp</th><th>Missing PPE</th>
+            <th>Present PPE</th><th>Location</th><th>People</th>
+          </tr>
+        </thead>
+        <tbody id="violations-tbody">
+          <tr><td colspan="6" class="table-empty">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </main>
+</div>
+
+<script src="/static/js/app.js"></script>
+<script>
+  loadDashboardStats();
+  loadDashboardCharts();
+  loadViolations();
+  setInterval(loadDashboardStats, 10000);
+</script>
+</body>
+</html>

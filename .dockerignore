@@ -1,0 +1,8 @@
+.git
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.python-version
+.claude
+database/violations_export.csv

@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Settings — PPE Safety AI</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+<div class="app-container">
+
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <div class="brand-icon">🦺</div>
+      <h1>PPE Safety AI</h1>
+      <p>Compliance Monitor</p>
+    </div>
+    <nav class="sidebar-nav">
+      <div class="nav-section-label">Navigation</div>
+      <a href="/"           class="nav-item"><span class="icon">📊</span><span>Dashboard</span></a>
+      <a href="/monitor"    class="nav-item"><span class="icon">📷</span><span>Live Monitor</span></a>
+      <a href="/violations" class="nav-item"><span class="icon">⚠️</span><span>Violations</span></a>
+      <a href="/settings"   class="nav-item active"><span class="icon">⚙️</span><span>Settings</span></a>
+    </nav>
+    <div class="sidebar-footer">
+      <span class="status-dot"></span>System Online
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <main class="main-content">
+    <div class="page-header">
+      <h2>Settings</h2>
+      <p>Configure PPE requirements and detection parameters</p>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+
+      <!-- Required PPE -->
+      <div class="glass-card">
+        <h3 style="font-size:14px;font-weight:600;margin-bottom:16px">Required PPE Items</h3>
+        <p style="color:var(--muted);font-size:12px;margin-bottom:16px">
+          Enable items that workers must wear. Violations are logged when required PPE is absent.
+        </p>
+
+        <div class="toggle-row">
+          <div>
+            <div class="toggle-label">🪖 Hard Hat</div>
+            <div class="toggle-desc">Mandatory head protection</div>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" id="req-hardhat" checked />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
+        <div class="toggle-row">
+          <div>
+            <div class="toggle-label">🦺 Safety Vest</div>
+            <div class="toggle-desc">High-visibility reflective vest</div>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" id="req-vest" checked />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
+        <div class="toggle-row">
+          <div>
+            <div class="toggle-label">😷 Mask</div>
+            <div class="toggle-desc">Respiratory / face protection</div>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" id="req-mask" />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Detection settings -->
+      <div class="glass-card">
+        <h3 style="font-size:14px;font-weight:600;margin-bottom:16px">Detection Settings</h3>
+
+        <div class="form-group">
+          <label class="form-label">YOLO Confidence Threshold</label>
+          <input type="range" id="yolo-conf" min="0.2" max="0.9" step="0.05" value="0.45"
+                 class="form-control" oninput="document.getElementById('conf-val').textContent = (+this.value*100).toFixed(0)+'%'" />
+          <div style="display:flex;justify-content:space-between;margin-top:4px;font-size:11px;color:var(--muted)">
+            <span>Sensitive (20%)</span>
+            <span id="conf-val" style="color:var(--text);font-weight:600">45%</span>
+            <span>Strict (90%)</span>
+          </div>
+          <div style="font-size:11px;color:var(--muted);margin-top:6px">
+            Lower = detects more (may have false positives) · Higher = more precise
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Site Location Name</label>
+          <input type="text" id="location" class="form-control" value="Main Entrance"
+                 placeholder="e.g. Warehouse Floor A" />
+          <div style="font-size:11px;color:var(--muted);margin-top:4px">
+            Stored with each violation record for reporting
+          </div>
+        </div>
+      </div>
+
+      <!-- System info -->
+      <div class="glass-card">
+        <h3 style="font-size:14px;font-weight:600;margin-bottom:16px">System Information</h3>
+        <div class="info-row">
+          <span class="lbl">AI Model</span>
+          <span class="val">YOLOv8n PPE Detection</span>
+        </div>
+        <div class="info-row">
+          <span class="lbl">Model Source</span>
+          <span class="val">keremberke / HuggingFace</span>
+        </div>
+        <div class="info-row">
+          <span class="lbl">Detectable Classes</span>
+          <span class="val">10 (PPE + objects)</span>
+        </div>
+        <div class="info-row">
+          <span class="lbl">Database</span>
+          <span class="val">SQLite (local)</span>
+        </div>
+        <div class="info-row">
+          <span class="lbl">Model Status</span>
+          <span class="val" id="model-status">Checking…</span>
+        </div>
+      </div>
+
+      <!-- Save -->
+      <div class="glass-card" style="display:flex;flex-direction:column;justify-content:space-between">
+        <div>
+          <h3 style="font-size:14px;font-weight:600;margin-bottom:10px">Detected Classes</h3>
+          <p style="color:var(--muted);font-size:12px;line-height:1.7">
+            <span class="badge badge-compliant">Hardhat</span>&nbsp;
+            <span class="badge badge-compliant">Safety Vest</span>&nbsp;
+            <span class="badge badge-compliant">Mask</span>&nbsp;
+            <span class="badge badge-violation">NO-Hardhat</span>&nbsp;
+            <span class="badge badge-violation">NO-Safety Vest</span>&nbsp;
+            <span class="badge badge-violation">NO-Mask</span>&nbsp;
+            <span class="badge badge-person">Person</span>&nbsp;
+            <span class="badge badge-object">Safety Cone</span>&nbsp;
+            <span class="badge badge-object">Machinery</span>&nbsp;
+            <span class="badge badge-object">Vehicle</span>
+          </p>
+        </div>
+        <div style="margin-top:20px">
+          <button class="btn btn-primary" style="width:100%" onclick="saveSettings()">
+            💾 Save Settings
+          </button>
+        </div>
+      </div>
+
+    </div><!-- end grid -->
+  </main>
+</div>
+
+<script src="/static/js/app.js"></script>
+<script>
+async function loadSettings() {
+  const r = await fetch("/api/settings");
+  const d = await r.json();
+  document.getElementById("req-hardhat").checked = !!d.require_hardhat;
+  document.getElementById("req-vest").checked    = !!d.require_safety_vest;
+  document.getElementById("req-mask").checked    = !!d.require_mask;
+  const c = d.yolo_conf || 0.45;
+  document.getElementById("yolo-conf").value = c;
+  document.getElementById("conf-val").textContent = (c * 100).toFixed(0) + "%";
+  document.getElementById("location").value = d.location || "Main Entrance";
+}
+
+async function checkModelStatus() {
+  try {
+    const r = await fetch("/health");
+    const d = await r.json();
+    const el = document.getElementById("model-status");
+    if (d.model_loaded) {
+      el.textContent = "✓ Loaded";
+      el.style.color = "var(--green)";
+    } else {
+      el.textContent = "⏳ Loading…";
+      el.style.color = "var(--yellow)";
+      setTimeout(checkModelStatus, 3000);
+    }
+  } catch (_) {}
+}
+
+async function saveSettings() {
+  const payload = {
+    require_hardhat:     document.getElementById("req-hardhat").checked,
+    require_safety_vest: document.getElementById("req-vest").checked,
+    require_mask:        document.getElementById("req-mask").checked,
+    yolo_conf:           parseFloat(document.getElementById("yolo-conf").value),
+    location:            document.getElementById("location").value.trim() || "Main Entrance",
+  };
+  const r = await fetch("/api/settings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const d = await r.json();
+  showToast(d.message || "Saved", d.success ? "success" : "error");
+}
+
+loadSettings();
+checkModelStatus();
+</script>
+</body>
+</html>
