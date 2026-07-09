@@ -42,33 +42,44 @@ PPE_META = {
 # We crop the YOLO box region and check what fraction of pixels fall within
 # recognised safety-helmet HSV ranges. If too low → reject the detection.
 # ---------------------------------------------------------------------------
-HELMET_SAFE_RATIO = 0.22   # at least 22 % of box pixels must be helmet-colored
+HELMET_SAFE_RATIO = 0.22   # ≥ 22 % of box pixels must be safety-helmet color
+VEST_SAFE_RATIO   = 0.18   # ≥ 18 % of box pixels must be hi-vis vest color
 
-def _is_safety_helmet(frame: np.ndarray, x1: int, y1: int, x2: int, y2: int) -> bool:
+def _crop_hsv(frame: np.ndarray, x1: int, y1: int, x2: int, y2: int):
     crop = frame[max(0, y1):max(0, y2), max(0, x1):max(0, x2)]
     if crop.size == 0:
-        return True                     # can't verify — accept
-
+        return None, None, None, None
     hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
-    h, s, v = hsv[:, :, 0], hsv[:, :, 1], hsv[:, :, 2]
+    return hsv[:, :, 0], hsv[:, :, 1], hsv[:, :, 2], crop.shape[0] * crop.shape[1]
 
-    # White / light-grey hard hat (low saturation, high brightness)
+def _is_safety_helmet(frame: np.ndarray, x1: int, y1: int, x2: int, y2: int) -> bool:
+    h, s, v, total_px = _crop_hsv(frame, x1, y1, x2, y2)
+    if h is None:
+        return True
+
+    # Safety helmets: white, yellow, orange, red, safety-blue, lime-green
     white  = (s < 55)  & (v > 155)
-    # Yellow hard hat  H ≈ 20–35
     yellow = (h >= 18) & (h <= 37) & (s > 70) & (v > 90)
-    # Orange hard hat  H ≈ 8–20
     orange = (h >= 7)  & (h <= 20) & (s > 80) & (v > 90)
-    # Red hard hat     H ≈ 0–10 or 160–180
     red    = ((h <= 10) | (h >= 158)) & (s > 80) & (v > 70)
-    # Safety blue      H ≈ 95–125
     blue   = (h >= 95) & (h <= 125) & (s > 80) & (v > 70)
-    # Lime / safety green  H ≈ 35–82
     green  = (h >= 35) & (h <= 82)  & (s > 90) & (v > 70)
 
-    safe_px    = (white | yellow | orange | red | blue | green).sum()
-    total_px   = crop.shape[0] * crop.shape[1]
-    ratio      = safe_px / total_px if total_px > 0 else 0
+    ratio = (white | yellow | orange | red | blue | green).sum() / total_px
     return ratio >= HELMET_SAFE_RATIO
+
+def _is_safety_vest(frame: np.ndarray, x1: int, y1: int, x2: int, y2: int) -> bool:
+    h, s, v, total_px = _crop_hsv(frame, x1, y1, x2, y2)
+    if h is None:
+        return True
+
+    # Hi-vis vests are always lime-yellow, yellow, or orange — never dark
+    lime   = (h >= 30) & (h <= 80)  & (s > 90)  & (v > 100)   # lime / yellow-green
+    yellow = (h >= 18) & (h <= 35)  & (s > 70)  & (v > 100)   # bright yellow
+    orange = (h >= 7)  & (h <= 20)  & (s > 100) & (v > 100)   # orange hi-vis
+
+    ratio = (lime | yellow | orange).sum() / total_px
+    return ratio >= VEST_SAFE_RATIO
 
 # ---------------------------------------------------------------------------
 # Mutable runtime state (protected by Python's GIL for simple dict swap)
@@ -231,10 +242,11 @@ def api_process_frame():
                 conf  = float(box.conf[0])
                 label = yolo_model.names[cls]
 
-                # Reject "Hardhat" detections that fail the safety-color check
-                # (caps, handkerchiefs, dark hats are filtered out here)
+                # Reject detections that fail the safety-color check
                 if label == "Hardhat" and not _is_safety_helmet(frame, x1, y1, x2, y2):
-                    continue
+                    continue   # caps, handkerchiefs, dark hats → ignored
+                if label == "Safety Vest" and not _is_safety_vest(frame, x1, y1, x2, y2):
+                    continue   # dark jackets, shirts, hoodies → ignored
 
                 meta  = PPE_META.get(label, {"kind": "object", "ppe": None, "color": (120, 120, 120)})
                 kind  = meta["kind"]
