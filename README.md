@@ -1,72 +1,98 @@
-# PPE Safety AI
+<div align="center">
 
-An AI-powered Personal Protective Equipment (PPE) compliance monitoring system. Point a camera at workers — the system detects in real-time whether they are wearing the required safety gear and logs every violation.
+# 🦺 PPE Safety AI
 
----
+**Real-time Personal Protective Equipment compliance detection powered by YOLOv8**
 
-## What It Detects
+[![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
+[![Flask](https://img.shields.io/badge/Flask-3.1-000000?style=flat-square&logo=flask&logoColor=white)](https://flask.palletsprojects.com/)
+[![YOLOv8](https://img.shields.io/badge/YOLOv8-PPE_Model-FF6B35?style=flat-square)](https://ultralytics.com/)
+[![Railway](https://img.shields.io/badge/Deploy-Railway-0B0D0E?style=flat-square&logo=railway&logoColor=white)](https://railway.app)
+[![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
 
-| Detection | Meaning |
-|---|---|
-| ✅ Hardhat | Hard hat is being worn |
-| ✅ Safety Vest | Hi-vis vest is being worn |
-| ✅ Mask | Face mask is being worn |
-| ❌ NO-Hardhat | Hard hat is **missing** → violation |
-| ❌ NO-Safety Vest | Safety vest is **missing** → violation |
-| ❌ NO-Mask | Mask is **missing** → violation |
-| 👷 Person | Person detected |
-| 🟠 Safety Cone / Machinery / Vehicle | Other site objects |
+Point a camera at a worker — the AI instantly detects whether they're wearing required safety gear and logs every violation.
+
+</div>
 
 ---
 
-## How It Works
+## What It Does
+
+Workers enter a camera's field of view. The system:
+
+1. Detects people and PPE items using a dedicated **YOLOv8 model**
+2. Checks which required equipment is **present** and which is **missing**
+3. Displays a real-time **COMPLIANT** or **VIOLATION** banner on the live feed
+4. **Logs every violation** to a database with timestamp and location
+5. Renders annotated bounding boxes — green for worn PPE, red for missing PPE
+
+---
+
+## Detection Classes
+
+| Class | Status | Meaning |
+|---|---|---|
+| `Hardhat` | ✅ Safe | Hard hat is being worn |
+| `Safety Vest` | ✅ Safe | Hi-vis vest is being worn |
+| `Mask` | ✅ Safe | Face mask is being worn |
+| `NO-Hardhat` | 🚨 Violation | Hard hat is **missing** |
+| `NO-Safety Vest` | 🚨 Violation | Safety vest is **missing** |
+| `NO-Mask` | 🚨 Violation | Mask is **missing** |
+| `Person` | 👷 Info | Worker detected |
+| `Safety Cone` / `machinery` / `vehicle` | 🟠 Info | Other site objects |
+
+> The model detects both the **presence** and **absence** of PPE — not just objects, but compliance state.
+
+---
+
+## Detection Flow
 
 ```
-Browser webcam → frame sent to /api/process_frame every ~1 second
-       ↓
-YOLOv8n PPE model runs detection on the frame
-       ↓
-Compliance check: Is required PPE present or missing?
-       ↓
-Annotated frame returned + violation logged to SQLite
-       ↓
-Live monitor displays status: COMPLIANT or VIOLATION
+Browser Webcam
+      │
+      ▼  (frame sent every ~1 second)
+/api/process_frame
+      │
+      ▼
+YOLOv8n PPE Model
+      │
+      ├── Green boxes → PPE items detected
+      ├── Red boxes   → PPE items missing
+      │
+      ▼
+Compliance Check
+      │
+      ├── COMPLIANT  → Banner turns green
+      └── VIOLATION  → Banner turns red + logged to SQLite
 ```
-
-The YOLO model (`keremberke/yolov8n-PPE-detection`) is trained specifically to detect both the presence AND absence of PPE items — it will draw green boxes around detected PPE and red boxes around missing PPE.
 
 ---
 
-## Pages
+## Features
 
-### Dashboard `/`
-Today's compliance rate, total scans, violation count, people detected. 7-day compliance trend chart and violations-by-type donut chart.
-
-### Live Monitor `/monitor`
-Start your browser webcam. Frames are sent to the server for detection every second. The right panel shows real-time PPE status for each item (detected / missing). A compliance banner turns green for COMPLIANT and red for VIOLATION.
-
-### Violations Log `/violations`
-Full searchable log of all violations with date and PPE-type filters. Hourly bar chart for today. Export to CSV.
-
-### Settings `/settings`
-Configure which PPE items are required (hard hat, vest, mask), the YOLO confidence threshold, and the site location name.
+- **Live Monitor** — browser webcam feed with real-time annotated detection overlay
+- **Compliance Banner** — instant green/red status across the top of the video feed
+- **PPE Checklist** — per-item status panel showing detected / missing for each gear type
+- **Violation Logging** — every incident saved with timestamp, location, and people count
+- **Dashboard** — today's compliance rate, 7-day trend chart, violations by PPE type
+- **Violations Log** — filterable table by date and PPE type, CSV export
+- **Settings** — configure which PPE items are required, detection confidence, site location
+- **Lightweight** — no TensorFlow, no face recognition stack — deploys in ~3 minutes
 
 ---
 
 ## Tech Stack
 
-| Component | Technology |
+| Layer | Technology |
 |---|---|
-| Web Framework | Flask |
-| PPE Detection | YOLOv8n (Ultralytics) |
-| Model | keremberke/yolov8n-PPE-detection (HuggingFace) |
+| Web Framework | Flask 3.1 |
+| PPE Detection | YOLOv8n — `keremberke/yolov8n-PPE-detection` |
 | Image Processing | OpenCV (headless) |
 | Database | SQLite |
-| Frontend | HTML + CSS + Vanilla JS + Chart.js |
+| Charts | Chart.js |
+| Frontend | HTML + CSS + Vanilla JS |
 | Production Server | Gunicorn |
 | Deployment | Railway (Docker) |
-
-**No TensorFlow, no DeepFace — much lighter than a face recognition system.**
 
 ---
 
@@ -74,33 +100,36 @@ Configure which PPE items are required (hard hat, vest, mask), the YOLO confiden
 
 ```
 PPE-Safety-AI/
-├── app.py                  # Flask application — all routes and detection logic
+│
+├── app.py                   # Flask backend — all routes and detection logic
 │
 ├── templates/
-│   ├── dashboard.html      # Stats and charts overview
-│   ├── monitor.html        # Live webcam detection
-│   ├── violations.html     # Violation log with filters
-│   └── settings.html       # Configure PPE requirements
+│   ├── dashboard.html       # Compliance stats and trend charts
+│   ├── monitor.html         # Live webcam detection terminal
+│   ├── violations.html      # Violation log with filters and hourly chart
+│   └── settings.html        # PPE requirements and detection settings
 │
 ├── static/
-│   ├── css/style.css       # Dark theme UI
-│   └── js/app.js           # Shared JS utilities
+│   ├── css/style.css        # Dark theme design system
+│   └── js/app.js            # Shared utilities (charts, toasts, table loader)
 │
-├── database/               # Auto-created on first run
-│   └── ppe_safety.db       # SQLite database
+├── database/                # Auto-created on first run
+│   └── ppe_safety.db        # SQLite — violations + scans tables
 │
-├── Dockerfile              # Python 3.11-slim for Railway
-├── Procfile                # Gunicorn start command
-├── requirements.txt        # Python dependencies
-└── railway.json            # Health check config
+├── Dockerfile               # Python 3.11-slim container
+├── Procfile                 # Gunicorn command
+├── requirements.txt         # Python dependencies
+└── railway.json             # Railway health check config
 ```
 
 ---
 
 ## Running Locally
 
+**Requirements:** Python 3.11, a webcam
+
 ```bash
-git clone https://github.com/YOUR_USERNAME/PPE-Safety-AI.git
+git clone https://github.com/ani14006/PPE-Safety-AI.git
 cd PPE-Safety-AI
 
 pip install -r requirements.txt
@@ -110,46 +139,55 @@ python app.py
 
 Open `http://localhost:5002`
 
-> On first run the YOLO PPE model (~6 MB) is downloaded automatically from HuggingFace and cached locally.
+> On first run, the YOLOv8 PPE model (~6 MB) downloads automatically from HuggingFace and is cached locally.
 
 ---
 
 ## Deploying to Railway
 
-1. Push this repo to GitHub
+Pre-configured for one-click Railway deployment via Docker.
+
+1. Fork or push this repo to your GitHub
 2. Go to [railway.app](https://railway.app) → **New Project** → **Deploy from GitHub repo**
-3. Select this repository — Railway auto-detects the `Dockerfile`
-4. Go to **Settings → Networking → Generate Domain** for your public URL
+3. Select `PPE-Safety-AI` — Railway auto-detects the `Dockerfile`
+4. Go to **Settings → Networking → Generate Domain**
 
-**Build time:** ~3–5 minutes (much faster than SmartHR AI — no TensorFlow)
+**Build time: ~3–5 minutes**
 
-### Environment Variables (optional)
+### Environment Variables
 
 | Variable | Default | Description |
 |---|---|---|
 | `PPE_MODEL` | `keremberke/yolov8n-PPE-detection` | HuggingFace model ID or local `.pt` path |
-| `DATABASE_DIR` | `database` | Path for SQLite DB. Use a Railway Volume for persistence |
-| `FLASK_DEBUG` | `0` | Set to `1` for local development |
+| `DATABASE_DIR` | `database` | SQLite storage path. Set to a Railway Volume for persistence across deploys |
+| `FLASK_DEBUG` | `0` | Set to `1` for local development only |
 
 ---
 
-## API Endpoints
+## API Reference
 
 | Method | Endpoint | Description |
 |---|---|---|
-| GET | `/health` | Health check — `{"status": "ok", "model_loaded": true}` |
-| POST | `/api/process_frame` | Process a webcam frame, returns annotated image + status |
-| GET | `/api/live_status` | Current detection status + any pending notification |
-| GET | `/api/stats` | Dashboard stats (scans, compliance rate, violations, people) |
-| GET | `/api/charts` | Chart data (daily compliance, violation types, hourly) |
-| GET | `/api/violations/list` | Violation log with optional `date` and `ppe_type` filters |
-| GET | `/api/export/csv` | Download violations as CSV |
-| GET/POST | `/api/settings` | Get or update detection settings |
+| `GET` | `/health` | Health check — `{"status":"ok","model_loaded":true}` |
+| `POST` | `/api/process_frame` | Accepts base64 frame, returns annotated image + compliance status |
+| `GET` | `/api/live_status` | Current detection state and any pending violation notification |
+| `GET` | `/api/stats` | Today's scans, compliance rate, violations, people detected |
+| `GET` | `/api/charts` | Chart data — 7-day compliance, violations by type, hourly breakdown |
+| `GET` | `/api/violations/list` | Paginated violation log with `date` and `ppe_type` query filters |
+| `GET` | `/api/export/csv` | Download all violations as a CSV file |
+| `GET/POST` | `/api/settings` | Read or update detection configuration |
 
 ---
 
-## Notes
+## Important Notes
 
-- The SQLite database is **ephemeral on Railway** by default — it resets on each deploy. Mount a Railway Volume and set `DATABASE_DIR` to make it persistent.
-- The browser needs **camera permission**. On Railway (HTTPS), this works automatically.
-- Violations are logged **every 5 seconds** while a non-compliant person is in frame — not every frame — to avoid flooding the database.
+- **Violations are logged every 5 seconds** while a non-compliant person remains in frame — not every detection frame — to avoid flooding the database
+- **SQLite is ephemeral on Railway** — data resets on each redeploy. Mount a Railway Volume and set `DATABASE_DIR` to make it persistent
+- **HTTPS is required** for browser webcam access. Railway provides HTTPS automatically on generated domains
+- **Settings apply immediately** — no server restart needed to change required PPE items or confidence threshold
+
+---
+
+## License
+
+MIT License — see [LICENSE](LICENSE) for details.
