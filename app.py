@@ -100,24 +100,61 @@ init_db()
 # ---------------------------------------------------------------------------
 # YOLO model — loaded in background so the app starts instantly
 # ---------------------------------------------------------------------------
-yolo_model = None
+yolo_model       = None
+model_loading    = True   # True while thread is running
+model_load_error = None   # set to error string on failure
 
 def _load_model():
-    global yolo_model
+    global yolo_model, model_loading, model_load_error
     from ultralytics import YOLO
-    candidates = [f"hf://{MODEL_PATH}", MODEL_PATH] if not MODEL_PATH.endswith(".pt") else [MODEL_PATH]
-    for path in candidates:
-        try:
-            print(f"[startup] Trying model: {path}")
-            yolo_model = YOLO(path)
-            # Warm-up so first real frame isn't slow
-            dummy = np.zeros((320, 320, 3), dtype=np.uint8)
-            yolo_model(dummy, verbose=False)
-            print(f"[startup] Model loaded OK. Classes: {list(yolo_model.names.values())}")
-            return
-        except Exception as exc:
-            print(f"[startup] {path} failed: {exc}")
-    print("[startup] All model paths failed — detection will be unavailable.")
+
+    # Strategy 1: explicit hf_hub_download — most reliable on cloud hosts
+    try:
+        from huggingface_hub import hf_hub_download
+        repo_id = MODEL_PATH if "/" in MODEL_PATH else "keremberke/yolov8n-PPE-detection"
+        print(f"[startup] Downloading {repo_id}/best.pt from HuggingFace…")
+        pt_path = hf_hub_download(repo_id=repo_id, filename="best.pt")
+        print(f"[startup] Downloaded to {pt_path}")
+        yolo_model = YOLO(pt_path)
+        dummy = np.zeros((320, 320, 3), dtype=np.uint8)
+        yolo_model(dummy, verbose=False)
+        print(f"[startup] Model ready ✓  classes={list(yolo_model.names.values())}")
+        model_loading = False
+        return
+    except Exception as exc:
+        print(f"[startup] hf_hub_download failed: {exc}")
+
+    # Strategy 2: hf:// URI (ultralytics >= 8.2 native HF support)
+    try:
+        hf_uri = f"hf://keremberke/yolov8n-PPE-detection"
+        print(f"[startup] Trying {hf_uri}…")
+        yolo_model = YOLO(hf_uri)
+        dummy = np.zeros((320, 320, 3), dtype=np.uint8)
+        yolo_model(dummy, verbose=False)
+        print(f"[startup] Model ready via hf:// ✓")
+        model_loading = False
+        return
+    except Exception as exc:
+        print(f"[startup] hf:// failed: {exc}")
+
+    # Strategy 3: bare repo-id string
+    try:
+        print(f"[startup] Trying bare repo id…")
+        yolo_model = YOLO("keremberke/yolov8n-PPE-detection")
+        dummy = np.zeros((320, 320, 3), dtype=np.uint8)
+        yolo_model(dummy, verbose=False)
+        print(f"[startup] Model ready via bare id ✓")
+        model_loading = False
+        return
+    except Exception as exc:
+        print(f"[startup] bare id failed: {exc}")
+
+    model_load_error = (
+        "Could not download the PPE detection model from HuggingFace. "
+        "Check Railway logs for details."
+    )
+    model_loading = False
+    print(f"[startup] All strategies failed — {model_load_error}")
 
 threading.Thread(target=_load_model, daemon=True).start()
 
@@ -142,7 +179,12 @@ def settings():
 
 @app.route("/health")
 def health():
-    return jsonify({"status": "ok", "model_loaded": yolo_model is not None})
+    return jsonify({
+        "status":       "ok",
+        "model_loaded": yolo_model is not None,
+        "model_loading": model_loading,
+        "model_error":  model_load_error,
+    })
 
 # ---------------------------------------------------------------------------
 # API — process_frame
@@ -166,12 +208,13 @@ def api_process_frame():
         # --- Model not ready yet ----------------------------------------
         if yolo_model is None:
             return jsonify({
-                "success": True,
-                "loading": True,
+                "success":    True,
+                "loading":    model_loading,
+                "error":      model_load_error,
                 "detections": [],
-                "frame_w": frame.shape[1],
-                "frame_h": frame.shape[0],
-                "status": current_status,
+                "frame_w":    frame.shape[1],
+                "frame_h":    frame.shape[0],
+                "status":     current_status,
             })
 
         # --- Run detection ----------------------------------------------

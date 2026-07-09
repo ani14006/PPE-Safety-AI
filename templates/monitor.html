@@ -6,24 +6,26 @@
   <title>Live Monitor — PPE Safety AI</title>
   <link rel="stylesheet" href="/static/css/style.css" />
   <style>
-    /* Overlay canvas sits exactly on top of the video */
     .video-wrapper { position: relative; }
     #overlay-canvas {
       position: absolute; inset: 0;
       width: 100%; height: 100%;
       pointer-events: none;
     }
-    #loading-overlay {
+    #model-overlay {
       position: absolute; inset: 0; display: none;
       align-items: center; justify-content: center;
-      background: rgba(0,0,0,.55); color: #fff;
-      font-size: 14px; gap: 10px; flex-direction: column;
+      background: rgba(0,0,0,.65); color: #fff;
+      font-size: 13px; gap: 10px; flex-direction: column;
+      text-align: center; padding: 20px;
     }
+    #model-overlay.error-state { background: rgba(80,0,0,.75); }
     .spinner {
       width: 36px; height: 36px; border: 3px solid rgba(255,255,255,.2);
       border-top-color: #6c63ff; border-radius: 50%;
       animation: spin .8s linear infinite;
     }
+    .error-icon { font-size: 36px; }
     @keyframes spin { to { transform: rotate(360deg); } }
   </style>
 </head>
@@ -68,10 +70,14 @@
           <!-- Transparent canvas drawn on top for detection boxes -->
           <canvas id="overlay-canvas"></canvas>
 
-          <!-- Loading spinner shown while AI model warms up -->
-          <div id="loading-overlay">
-            <div class="spinner"></div>
-            <span>AI model loading — detection starts shortly…</span>
+          <!-- Model status overlay (loading / error) -->
+          <div id="model-overlay">
+            <div class="spinner" id="model-spinner"></div>
+            <div class="error-icon" id="model-error-icon" style="display:none">⚠️</div>
+            <strong id="model-overlay-title">AI Model Loading</strong>
+            <span id="model-overlay-msg" style="opacity:.8;max-width:300px">
+              Downloading PPE detection model — this takes ~30 seconds on first deploy…
+            </span>
           </div>
 
           <!-- Placeholder when camera is off -->
@@ -166,27 +172,33 @@
 <script src="/static/js/app.js"></script>
 <script>
 // ---- DOM refs -----------------------------------------------------------
-const webcam         = document.getElementById("webcam");
-const overlayCanvas  = document.getElementById("overlay-canvas");
-const overlayCtx     = overlayCanvas.getContext("2d");
-const loadingOverlay = document.getElementById("loading-overlay");
-const placeholder    = document.getElementById("placeholder");
-const btnStart       = document.getElementById("btn-start");
-const btnStop        = document.getElementById("btn-stop");
-const banner         = document.getElementById("compliance-banner");
-const bannerText     = document.getElementById("banner-text");
-const bannerSub      = document.getElementById("banner-sub");
-const statusDot      = document.getElementById("status-dot");
-const statusText     = document.getElementById("status-text");
+const webcam          = document.getElementById("webcam");
+const overlayCanvas   = document.getElementById("overlay-canvas");
+const overlayCtx      = overlayCanvas.getContext("2d");
+const modelOverlay    = document.getElementById("model-overlay");
+const modelSpinner    = document.getElementById("model-spinner");
+const modelErrIcon    = document.getElementById("model-error-icon");
+const modelTitle      = document.getElementById("model-overlay-title");
+const modelMsg        = document.getElementById("model-overlay-msg");
+const placeholder     = document.getElementById("placeholder");
+const btnStart        = document.getElementById("btn-start");
+const btnStop         = document.getElementById("btn-stop");
+const banner          = document.getElementById("compliance-banner");
+const bannerText      = document.getElementById("banner-text");
+const bannerSub       = document.getElementById("banner-sub");
+const statusDot       = document.getElementById("status-dot");
+const statusText      = document.getElementById("status-text");
 
 // Hidden canvas used only for capturing frames to send to the server
 const captureCanvas = document.createElement("canvas");
 const captureCtx    = captureCanvas.getContext("2d");
 
-let stream     = null;
-let running    = false;
-let frameTimer = null;
-let statusPoll = null;
+let stream      = null;
+let running     = false;
+let frameTimer  = null;
+let statusPoll  = null;
+let healthPoll  = null;
+let modelReady  = false;
 
 // ---- Camera start/stop --------------------------------------------------
 async function startCamera() {
@@ -203,6 +215,8 @@ async function startCamera() {
       scheduleFrame();
     }, { once: true });
     statusPoll = setInterval(pollNotifications, 4000);
+    healthPoll = setInterval(checkModelHealth, 5000);
+    checkModelHealth(); // immediate check
   } catch (e) {
     showToast("Camera access denied: " + e.message, "error");
   }
@@ -212,6 +226,7 @@ function stopCamera() {
   running = false;
   clearTimeout(frameTimer);
   clearInterval(statusPoll);
+  clearInterval(healthPoll);
   if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
   webcam.srcObject = null;
   placeholder.style.display = "";
@@ -257,11 +272,17 @@ async function sendFrame() {
 
     if (!data.success) { scheduleFrame(); return; }
 
+    if (data.error) {
+      // Model permanently failed — show error, stop retrying
+      showModelError(data.error);
+      return;
+    }
+
     if (data.loading) {
-      loadingOverlay.style.display = "flex";
-      document.getElementById("info-model").textContent = "Loading…";
+      showModelLoading();
     } else {
-      loadingOverlay.style.display = "none";
+      modelReady = true;
+      modelOverlay.style.display = "none";
       document.getElementById("info-model").textContent = "PPE Detector ✓";
       drawDetections(data.detections, data.frame_w, data.frame_h);
       updatePanel(data.status, data.detections.length);
@@ -382,6 +403,46 @@ function resetPPEItems() {
   ["st-hardhat","st-vest","st-mask"].forEach(id => {
     document.getElementById(id).textContent = "—";
   });
+}
+
+// ---- Model overlay helpers ----------------------------------------------
+function showModelLoading() {
+  modelOverlay.style.display = "flex";
+  modelOverlay.classList.remove("error-state");
+  modelSpinner.style.display  = "";
+  modelErrIcon.style.display  = "none";
+  modelTitle.textContent      = "AI Model Loading";
+  modelMsg.textContent        = "Downloading PPE detection model — this takes ~30 s on first deploy…";
+  document.getElementById("info-model").textContent = "Loading…";
+}
+
+function showModelError(msg) {
+  modelOverlay.style.display = "flex";
+  modelOverlay.classList.add("error-state");
+  modelSpinner.style.display  = "none";
+  modelErrIcon.style.display  = "";
+  modelTitle.textContent      = "Model Load Failed";
+  modelMsg.textContent        = msg || "Check Railway deploy logs for details.";
+  document.getElementById("info-model").textContent = "❌ Failed";
+  clearInterval(healthPoll);
+  clearTimeout(frameTimer);
+}
+
+// ---- Health check — polls /health every 5 s while model is loading ------
+async function checkModelHealth() {
+  try {
+    const r = await fetch("/health");
+    const d = await r.json();
+    if (d.model_loaded) {
+      modelReady = true;
+      modelOverlay.style.display = "none";
+      document.getElementById("info-model").textContent = "PPE Detector ✓";
+      clearInterval(healthPoll);
+    } else if (d.model_error) {
+      showModelError(d.model_error);
+    }
+    // else still loading — overlay stays as-is
+  } catch (_) {}
 }
 
 // ---- Poll for violation notifications -----------------------------------
