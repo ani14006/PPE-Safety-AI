@@ -42,8 +42,12 @@ PPE_META = {
 # We crop the YOLO box region and check what fraction of pixels fall within
 # recognised safety-helmet HSV ranges. If too low → reject the detection.
 # ---------------------------------------------------------------------------
-HELMET_SAFE_RATIO = 0.22   # ≥ 22 % of box pixels must be safety-helmet color
-VEST_SAFE_RATIO   = 0.09   # ≥  9 % — vest boxes are large (include body/bg pixels)
+HELMET_SAFE_RATIO  = 0.22   # ≥ 22 % of box pixels must be safety-helmet color
+VEST_SAFE_RATIO    = 0.09   # ≥  9 % — vest boxes are large (include body/bg pixels)
+WHITE_HELMET_RATIO = 0.18   # white pixel ratio to trigger shape check
+HELMET_SOLIDITY    = 0.74   # convex-hull fill — smooth dome scores high, plastic sheet low
+HELMET_MIN_ASPECT  = 0.75   # hard hat is always wider than it is tall
+HELMET_MAX_ASPECT  = 3.20
 
 def _crop_hsv(frame: np.ndarray, x1: int, y1: int, x2: int, y2: int):
     crop = frame[max(0, y1):max(0, y2), max(0, x1):max(0, x2)]
@@ -52,21 +56,67 @@ def _crop_hsv(frame: np.ndarray, x1: int, y1: int, x2: int, y2: int):
     hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
     return hsv[:, :, 0], hsv[:, :, 1], hsv[:, :, 2], crop.shape[0] * crop.shape[1]
 
+def _white_region_is_helmet_shaped(frame: np.ndarray,
+                                   x1: int, y1: int, x2: int, y2: int) -> bool:
+    """
+    Extra shape gate for white/light detections.
+    A genuine hard hat is a smooth convex dome:
+      - High solidity  (area / convex-hull area) — no jagged edges
+      - Aspect ratio   width/height roughly 0.75–3.2 (wider than tall)
+      - Reasonable extent inside its own bounding rect
+    A flat plastic sheet draped on the head fails the solidity check
+    because its contour is irregular and non-convex.
+    """
+    crop = frame[max(0, y1):max(0, y2), max(0, x1):max(0, x2)]
+    if crop.size == 0:
+        return False
+
+    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+    # Isolate the bright/white region
+    _, binary = cv2.threshold(gray, 155, 255, cv2.THRESH_BINARY)
+    contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return False
+
+    largest = max(contours, key=cv2.contourArea)
+    area    = cv2.contourArea(largest)
+    if area < 80:           # too small to be a helmet
+        return False
+
+    hull      = cv2.convexHull(largest)
+    hull_area = cv2.contourArea(hull)
+    solidity  = area / hull_area if hull_area > 0 else 0
+
+    x, y, w, h_ = cv2.boundingRect(largest)
+    aspect  = w / h_ if h_ > 0 else 0
+    extent  = area / (w * h_) if (w * h_) > 0 else 0
+
+    return (solidity >= HELMET_SOLIDITY and
+            HELMET_MIN_ASPECT <= aspect <= HELMET_MAX_ASPECT and
+            extent >= 0.38)
+
 def _is_safety_helmet(frame: np.ndarray, x1: int, y1: int, x2: int, y2: int) -> bool:
     h, s, v, total_px = _crop_hsv(frame, x1, y1, x2, y2)
     if h is None:
         return True
 
-    # Safety helmets: white, yellow, orange, red, safety-blue, lime-green
-    white  = (s < 55)  & (v > 155)
-    yellow = (h >= 18) & (h <= 37) & (s > 70) & (v > 90)
-    orange = (h >= 7)  & (h <= 20) & (s > 80) & (v > 90)
-    red    = ((h <= 10) | (h >= 158)) & (s > 80) & (v > 70)
-    blue   = (h >= 95) & (h <= 125) & (s > 80) & (v > 70)
-    green  = (h >= 35) & (h <= 82)  & (s > 90) & (v > 70)
+    # Coloured hard hats — colour alone is distinctive enough
+    yellow  = (h >= 18) & (h <= 37)  & (s > 70) & (v > 90)
+    orange  = (h >= 7)  & (h <= 20)  & (s > 80) & (v > 90)
+    red     = ((h <= 10) | (h >= 158)) & (s > 80) & (v > 70)
+    blue    = (h >= 95) & (h <= 125) & (s > 80)  & (v > 70)
+    green   = (h >= 35) & (h <= 82)  & (s > 90)  & (v > 70)
+    colored = (yellow | orange | red | blue | green).sum() / total_px
+    if colored >= HELMET_SAFE_RATIO:
+        return True
 
-    ratio = (white | yellow | orange | red | blue | green).sum() / total_px
-    return ratio >= HELMET_SAFE_RATIO
+    # White / light-grey hard hat — colour is ambiguous (plastic covers are also white)
+    # so we add a shape gate: only accept if the bright region is a smooth dome
+    white = (s < 55) & (v > 155)
+    if white.sum() / total_px >= WHITE_HELMET_RATIO:
+        return _white_region_is_helmet_shaped(frame, x1, y1, x2, y2)
+
+    return False
 
 def _is_safety_vest(frame: np.ndarray, x1: int, y1: int, x2: int, y2: int) -> bool:
     h, s, v, total_px = _crop_hsv(frame, x1, y1, x2, y2)
