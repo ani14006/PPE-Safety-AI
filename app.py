@@ -43,7 +43,7 @@ PPE_META = {
 # recognised safety-helmet HSV ranges. If too low → reject the detection.
 # ---------------------------------------------------------------------------
 HELMET_SAFE_RATIO = 0.22   # ≥ 22 % of box pixels must be safety-helmet color
-VEST_SAFE_RATIO   = 0.18   # ≥ 18 % of box pixels must be hi-vis vest color
+VEST_SAFE_RATIO   = 0.09   # ≥  9 % — vest boxes are large (include body/bg pixels)
 
 def _crop_hsv(frame: np.ndarray, x1: int, y1: int, x2: int, y2: int):
     crop = frame[max(0, y1):max(0, y2), max(0, x1):max(0, x2)]
@@ -73,12 +73,16 @@ def _is_safety_vest(frame: np.ndarray, x1: int, y1: int, x2: int, y2: int) -> bo
     if h is None:
         return True
 
-    # Hi-vis vests are always lime-yellow, yellow, or orange — never dark
-    lime   = (h >= 30) & (h <= 80)  & (s > 90)  & (v > 100)   # lime / yellow-green
-    yellow = (h >= 18) & (h <= 35)  & (s > 70)  & (v > 100)   # bright yellow
-    orange = (h >= 7)  & (h <= 20)  & (s > 100) & (v > 100)   # orange hi-vis
+    # Hi-vis vests: lime-yellow, yellow, orange, or bright orange-red.
+    # Threshold is low (9%) because the bounding box covers the whole torso —
+    # most pixels are body/background, not just the vest fabric.
+    # Also count silver/white reflective strips (low saturation, high brightness).
+    lime       = (h >= 28) & (h <= 85)  & (s > 70)  & (v > 90)    # lime / yellow-green
+    yellow     = (h >= 15) & (h <= 32)  & (s > 60)  & (v > 100)   # bright yellow
+    orange     = (h >= 5)  & (h <= 22)  & (s > 80)  & (v > 90)    # orange hi-vis
+    reflective = (s < 60)  & (v > 170)                              # silver / white strips
 
-    ratio = (lime | yellow | orange).sum() / total_px
+    ratio = (lime | yellow | orange | reflective).sum() / total_px
     return ratio >= VEST_SAFE_RATIO
 
 # ---------------------------------------------------------------------------
